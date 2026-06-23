@@ -1,0 +1,12 @@
+[project]
+name = "md-rendrer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1.3",
+    "gunicorn>=26.0.0",
+    "markdown>=3.10.2",
+    "xhtml2pdf>=0.2.17",
+]
