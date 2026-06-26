@@ -1,0 +1,8 @@
+paths:
+  markdown_folder: /home/mohittewari/papers/papers/summary  # markdowns will be saved here
+  artifact_dir: /home/mohittewari/papers/artifacts   # any artifacts like images will be saved here
+
+app_config:
+  host: 0.0.0.0                 # localhost if only running locally 
+  port: 8890
+  max_upload_bytes: 1048576000  # 1 GB

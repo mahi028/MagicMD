@@ -8,16 +8,27 @@ import os
 import uuid
 import mimetypes
 import io
+from pathlib import Path
+import yaml
 
 # ============================================================
-# CONFIG — edit these
+# CONFIG
 # ============================================================
 
-MARKDOWN_FOLDER  = r"/home/mohittewari/papers/papers/summary"
-ARTIFACT_DIR     = r"/home/mohittewari/papers/artifacts"
-HOST             = "0.0.0.0"
-PORT             = 8890
-MAX_UPLOAD_BYTES = 1000 * 1024 * 1024  # 1 GB
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
+
+with open(CONFIG_PATH, "r") as f:
+    cfg = yaml.safe_load(f)
+
+paths = cfg["paths"]
+app = cfg["app_config"]
+
+MARKDOWN_FOLDER = paths["markdown_folder"]
+ARTIFACT_DIR = paths["artifact_dir"]
+
+HOST = app["host"]
+PORT = app["port"]
+MAX_UPLOAD_BYTES = app["max_upload_bytes"]
 
 # ============================================================
 # SETUP
