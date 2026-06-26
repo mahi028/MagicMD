@@ -51,27 +51,23 @@ def get_markdown_files():
 
 def resolve_safe_path(relative_path):
     relative_path = relative_path.split("?")[0].split("#")[0]
+    if not relative_path.lower().endswith(".md"):
+        return None
     safe = (base_path / relative_path).resolve()
     if not str(safe).startswith(str(base_path)):
         return None
     return safe
 
 
-def resolve_safe_md_path(relative_path):
-    if not relative_path.lower().endswith(".md"):
-        return None
-    return resolve_safe_path(relative_path)
-
-
 def read_markdown(relative_path):
-    safe = resolve_safe_md_path(relative_path)
+    safe = resolve_safe_path(relative_path)
     if safe is None or not safe.exists():
         return None
     return safe.read_text(encoding="utf-8")
 
 
 def write_markdown(relative_path, content):
-    safe = resolve_safe_md_path(relative_path)
+    safe = resolve_safe_path(relative_path)
     if safe is None:
         return False
     safe.parent.mkdir(parents=True, exist_ok=True)
@@ -316,7 +312,7 @@ def api_new():
         return jsonify({"ok": False, "error": "No filename"}), 400
     if not file.endswith(".md"):
         file += ".md"
-    safe = resolve_safe_md_path(file)
+    safe = resolve_safe_path(file)
     if safe is None:
         return jsonify({"ok": False, "error": "Invalid path"}), 403
     if safe.exists():
@@ -324,44 +320,6 @@ def api_new():
     safe.parent.mkdir(parents=True, exist_ok=True)
     safe.write_text(f"# {Path(file).stem}\n\n", encoding="utf-8")
     return jsonify({"ok": True, "file": file})
-
-
-@app.route("/api/mkdir", methods=["POST"])
-def api_mkdir():
-    data = request.get_json(force=True)
-    folder = data.get("folder", "").strip()
-    if not folder:
-        return jsonify({"ok": False, "error": "No folder name"}), 400
-    folder = folder.strip("/")
-    safe = resolve_safe_path(folder)
-    if safe is None:
-        return jsonify({"ok": False, "error": "Invalid path"}), 403
-    if safe.exists():
-        return jsonify({"ok": False, "error": "Folder already exists"}), 409
-    safe.mkdir(parents=True, exist_ok=False)
-    return jsonify({"ok": True, "folder": folder})
-
-
-@app.route("/api/rename", methods=["POST"])
-def api_rename():
-    data = request.get_json(force=True)
-    old_path = data.get("old", "").strip()
-    new_path = data.get("new", "").strip()
-    if not old_path or not new_path:
-        return jsonify({"ok": False, "error": "Missing old or new path"}), 400
-
-    old_safe = resolve_safe_path(old_path)
-    new_safe = resolve_safe_path(new_path)
-    if old_safe is None or new_safe is None:
-        return jsonify({"ok": False, "error": "Invalid path"}), 403
-    if not old_safe.exists():
-        return jsonify({"ok": False, "error": "Source does not exist"}), 404
-    if new_safe.exists():
-        return jsonify({"ok": False, "error": "Destination already exists"}), 409
-
-    new_safe.parent.mkdir(parents=True, exist_ok=True)
-    old_safe.rename(new_safe)
-    return jsonify({"ok": True})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -373,42 +331,11 @@ def api_upload():
         return jsonify({"ok": False, "error": "Empty filename"}), 400
     data = f.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
-        return jsonify({"ok": False, "error": "File exceeds 1 GB limit"}), 413
+        return jsonify({"ok": False, "error": "File exceeds 10 MB limit"}), 413
     ext = Path(f.filename).suffix.lower() or ""
     safe_name = uuid.uuid4().hex + ext
     (artifact_path / safe_name).write_bytes(data)
     return jsonify({"ok": True, "filename": safe_name, "original": f.filename})
-
-
-@app.route("/api/upload-md", methods=["POST"])
-def api_upload_md():
-    """Upload a .md file directly into the library tree."""
-    if "file" not in request.files:
-        return jsonify({"ok": False, "error": "No file part"}), 400
-    f = request.files["file"]
-    dest_folder = request.form.get("folder", "").strip().strip("/")
-    if not f.filename:
-        return jsonify({"ok": False, "error": "Empty filename"}), 400
-    if not f.filename.lower().endswith(".md"):
-        return jsonify({"ok": False, "error": "Only .md files allowed"}), 400
-
-    data = f.read(MAX_UPLOAD_BYTES + 1)
-    if len(data) > MAX_UPLOAD_BYTES:
-        return jsonify({"ok": False, "error": "File too large"}), 413
-
-    safe_filename = re.sub(r"[^\w\-. ]", "_", f.filename)
-    rel = (dest_folder + "/" + safe_filename) if dest_folder else safe_filename
-    safe = resolve_safe_md_path(rel)
-    if safe is None:
-        return jsonify({"ok": False, "error": "Invalid path"}), 403
-    if safe.exists():
-        stem = Path(safe_filename).stem
-        rel = (dest_folder + "/" + stem + "_" + uuid.uuid4().hex[:6] + ".md") if dest_folder else (stem + "_" + uuid.uuid4().hex[:6] + ".md")
-        safe = resolve_safe_md_path(rel)
-
-    safe.parent.mkdir(parents=True, exist_ok=True)
-    safe.write_bytes(data)
-    return jsonify({"ok": True, "file": rel})
 
 
 @app.route("/artifacts/<path:filename>")
@@ -504,27 +431,21 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* ── Layout shell ── */
 #app     { display: flex; height: 100vh; }
 #sidebar { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--panel);
-  border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 10;
-  transition: width .22s cubic-bezier(.4,0,.2,1), min-width .22s cubic-bezier(.4,0,.2,1),
-              transform .22s cubic-bezier(.4,0,.2,1); overflow: hidden; }
-#sidebar.collapsed { width: 0; min-width: 0; border-right-color: transparent; }
+  border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 10; }
 #main    { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 
-/* Mobile: slide-over */
 @media (max-width: 767px) {
-  #sidebar { position: fixed; inset: 0 auto 0 0; width: var(--sidebar-w) !important;
-    min-width: var(--sidebar-w) !important; transform: translateX(-100%);
+  #sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%);
     transition: transform .22s cubic-bezier(.4,0,.2,1); box-shadow: none; }
   #sidebar.show { transform: translateX(0); box-shadow: 8px 0 40px rgba(0,0,0,.4); }
-  #sidebar.collapsed { transform: translateX(-100%); }
   #backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 9; }
   #backdrop.show { display: block; }
 }
 
-/* ── Sidebar inner ── */
-.sb-head { padding: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+/* ── Sidebar ── */
+.sb-head { padding: 10px; border-bottom: 1px solid var(--border); }
 .sb-brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700;
-  color: var(--text); padding: 2px 0 10px; white-space: nowrap; }
+  color: var(--text); padding: 2px 0 10px; }
 
 #search { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 6px 10px 6px 30px; font-size: 12.5px; outline: none;
@@ -534,83 +455,38 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #search:focus { border-color: var(--accent); }
 #search::placeholder { color: var(--muted); }
 
-/* ── Sidebar action bar ── */
-.sb-actions { display: flex; gap: 5px; margin-top: 8px; align-items: center; }
+.sb-actions { display: flex; gap: 6px; margin-top: 8px; }
 
-.btn-sb { flex: 1; padding: 5px 7px; font-size: 12px; font-weight: 600; border-radius: var(--r-sm);
+.btn-sb { flex: 1; padding: 5px 8px; font-size: 12px; font-weight: 600; border-radius: var(--r-sm);
   cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
-  display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap;
   transition: background .12s, color .12s, border-color .12s; }
 .btn-sb:hover { background: var(--panel); border-color: var(--accent); color: var(--accent); }
 .btn-sb.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn-sb.primary:hover { background: var(--accent-h); }
-.btn-sb.icon-only { flex: 0 0 28px; padding: 5px; font-size: 13px; }
-
-/* Context hint strip */
-#ctxHint { font-size: 10.5px; color: var(--muted); padding: 4px 10px 0;
-  display: none; align-items: center; gap: 5px; overflow: hidden; white-space: nowrap; }
-#ctxHint.show { display: flex; }
-#ctxHint i { font-size: 9px; opacity: .6; }
-#ctxHint span { overflow: hidden; text-overflow: ellipsis; }
 
 #fileList { flex: 1; overflow-y: auto; padding: 4px 0; }
 
-/* ── Tree rows ── */
-.folder-row {
-  padding: 6px 10px;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  user-select: none;
-  /* Only transition background and color — never height/padding */
-  transition: background .12s, color .12s;
-  position: relative;
-}
+.folder-row { padding: 6px 10px; cursor: pointer; font-size: 11px; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .08em;
+  display: flex; align-items: center; gap: 6px; user-select: none;
+  transition: background .1s, color .1s; }
 .folder-row:hover { background: var(--panel2); color: var(--text); }
-.folder-row.selected { background: var(--accent-dim); color: var(--text); }
-
-/* Chevron rotates via JS transform — CSS transition handles the animation */
-.folder-chevron {
-  font-size: 9px;
-  flex-shrink: 0;
-  transition: transform .2s cubic-bezier(.4,0,.2,1);
-  display: inline-block;
-}
+.folder-chevron { font-size: 9px; transition: transform .15s; }
 .folder-row.open .folder-chevron { transform: rotate(90deg); }
-
-.folder-count { margin-left: auto; font-size: 10px; font-weight: 400; opacity: .5; flex-shrink: 0; }
-
-/* folder-children: no CSS transition — height animated via JS */
-.folder-children { overflow: hidden; }
-
-/* Row action buttons */
-.row-actions { display: flex; align-items: center; gap: 2px; margin-left: 4px;
-  opacity: 0; transition: opacity .1s; }
-.folder-row:hover .row-actions,
-.file-item:hover .row-actions,
-.folder-row.selected .row-actions { opacity: 1; }
-.row-btn { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
-  border-radius: 4px; border: none; background: transparent; color: var(--muted); cursor: pointer;
-  font-size: 11px; flex-shrink: 0; transition: background .1s, color .1s; padding: 0; }
-.row-btn:hover { background: var(--panel2); color: var(--accent); }
+.folder-count { margin-left: auto; font-size: 10px; font-weight: 400; opacity: .5; }
+.folder-children { display: none; }
+.folder-children.open { display: block; }
 
 .file-item { padding: 6px 10px 6px 26px; cursor: pointer; font-size: 12.5px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   border-left: 2px solid transparent; border-bottom: 1px solid var(--border-soft);
-  transition: background .1s, color .1s, border-left-color .1s;
-  display: flex; align-items: center; gap: 0; }
-.file-item .fi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  transition: background .1s, color .1s, border-left-color .1s; }
 .file-item.root { padding-left: 10px; }
 .file-item:hover { background: var(--panel2); color: var(--text); }
 .file-item.active { background: var(--accent-dim); border-left-color: var(--accent); color: var(--text); font-weight: 600; }
 .file-item.readme { color: var(--accent); }
-.folder-tag { font-size: 10px; color: var(--muted); opacity: .6; margin-right: 3px; flex-shrink: 0; }
+.folder-tag { font-size: 10px; color: var(--muted); opacity: .6; margin-right: 3px; }
 
 /* ── Topbar ── */
 #topbar { height: var(--topbar-h); background: var(--panel); border-bottom: 1px solid var(--border);
@@ -659,8 +535,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 /* ── Workspace ── */
 #workspace { flex: 1; display: flex; overflow: hidden; }
+
 #previewWrap { flex: 1; display: flex; overflow: hidden; }
 #previewRendered { flex: 1; overflow-y: auto; padding: 20px; background: var(--bg); }
+
 #editorWrap { flex: 1; display: flex; overflow: hidden; }
 #editorPane { flex: 1; display: flex; flex-direction: column;
   border-right: 1px solid var(--border); overflow: hidden; position: relative; }
@@ -749,29 +627,13 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 999px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ── Modals ── */
+/* Modals */
 .modal-bg { position: fixed; inset: 0; z-index: 1000; display: none; align-items: center;
-  justify-content: center; background: rgba(0,0,0,.5); backdrop-filter: blur(2px); }
+  justify-content: center; background: rgba(0,0,0,.5); }
 .modal-bg.show { display: flex; }
 .modal-box { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg);
-  padding: 20px; width: 420px; max-width: 92vw; box-shadow: var(--shadow); }
-.modal-box h5 { font-size: 14px; font-weight: 700; margin-bottom: 12px;
-  display: flex; align-items: center; gap: 8px; }
-.modal-box h5 i { color: var(--accent); }
-
-.modal-type-row { display: flex; gap: 8px; margin-bottom: 14px; }
-.modal-type-btn { flex: 1; padding: 9px 12px; border-radius: var(--r-sm); border: 1px solid var(--border);
-  background: var(--panel2); color: var(--muted); cursor: pointer; font-size: 12.5px; font-weight: 600;
-  display: flex; align-items: center; gap: 7px; transition: all .12s; }
-.modal-type-btn:hover { border-color: var(--accent); color: var(--text); }
-.modal-type-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
-.modal-type-btn i { font-size: 15px; }
-
-.modal-ctx { font-size: 11.5px; color: var(--muted); background: var(--panel2);
-  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 6px 10px;
-  margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
-.modal-ctx i { font-size: 11px; opacity: .6; }
-
+  padding: 20px; width: 400px; max-width: 90vw; box-shadow: var(--shadow); }
+.modal-box h5 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
 .modal-input { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 7px 11px; font-size: 13px; outline: none;
   transition: border-color .15s; }
@@ -785,29 +647,16 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .btn-modal:hover { background: var(--panel); }
 .btn-modal.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn-modal.primary:hover { background: var(--accent-h); }
-.btn-modal.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 
 .modal-warn { display: flex; gap: 9px; background: rgba(245,158,11,.1);
   border: 1px solid rgba(245,158,11,.3); border-radius: var(--r-sm);
   padding: 9px 11px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.5; color: var(--body); }
 .modal-warn i { color: var(--warn); font-size: 15px; flex-shrink: 0; margin-top: 1px; }
 
-/* Upload drop zone */
-.upload-zone { border: 2px dashed var(--border); border-radius: var(--r-md);
-  padding: 18px; text-align: center; cursor: pointer; transition: all .15s;
-  color: var(--muted); font-size: 12.5px; margin-bottom: 4px; }
-.upload-zone:hover, .upload-zone.drag { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-.upload-zone i { display: block; font-size: 1.6rem; margin-bottom: 6px; opacity: .6; }
-#mdUploadInput { display: none; }
-
 .spinner { display: inline-block; width: 12px; height: 12px;
   border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
   border-radius: 50%; animation: spin .6s linear infinite; margin-right: 5px; vertical-align: -2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* Sidebar toggle button — always visible */
-#sidebarToggle { transition: transform .22s; }
-#sidebarToggle.rotated { transform: rotate(180deg); }
 </style>
 </head>
 <body>
@@ -831,21 +680,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
       <input id="search" type="search" placeholder="Search files…" oninput="filterFiles()">
       <div class="sb-actions">
         <button class="btn-sb" onclick="loadFiles()" title="Refresh">
-          <i class="bi bi-arrow-clockwise"></i>
+          <i class="bi bi-arrow-clockwise"></i> Refresh
         </button>
-        <button class="btn-sb primary" onclick="openNewModal('file')" title="New file or folder">
+        <button class="btn-sb primary" onclick="openNewModal()">
           <i class="bi bi-plus-lg"></i> New
         </button>
-        <button class="btn-sb icon-only" onclick="openUploadMdModal()" title="Upload .md file">
-          <i class="bi bi-upload"></i>
-        </button>
-        <button class="btn-sb d-md-none icon-only" onclick="closeSidebar()">
+        <button class="btn-sb d-md-none" onclick="closeSidebar()">
           <i class="bi bi-x-lg"></i>
         </button>
-      </div>
-      <div id="ctxHint">
-        <i class="bi bi-arrow-return-right"></i>
-        <span id="ctxHintText"></span>
       </div>
     </div>
     <div id="fileList"></div>
@@ -854,11 +696,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   <!-- Main -->
   <div id="main">
     <div id="topbar">
-      <!-- Desktop sidebar toggle -->
-      <button class="icon-btn d-none d-md-flex" id="sidebarToggle" onclick="toggleSidebarDesktop()" title="Toggle sidebar">
-        <i class="bi bi-layout-sidebar" style="font-size:15px"></i>
-      </button>
-      <!-- Mobile sidebar open -->
       <button class="icon-btn d-md-none" onclick="openSidebar()">
         <i class="bi bi-list" style="font-size:16px"></i>
       </button>
@@ -936,7 +773,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
             oninput="onEditorInput()" onkeydown="editorKeydown(event)"></textarea>
           <div id="dropOverlay">
             <i class="bi bi-cloud-upload-fill"></i>
-            <span>Drop media here · max 1 GB</span>
+            <span>Drop media here · max 10 MB</span>
           </div>
         </div>
         <div id="editorRenderedPane">
@@ -954,83 +791,25 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   <div class="toast-bar"><div class="toast-fill" id="toastFill"></div></div>
 </div>
 
-<!-- ── New File / Folder Modal ── -->
+<!-- New File Modal -->
 <div class="modal-bg" id="newModal" onclick="if(event.target===this)closeNewModal()">
   <div class="modal-box">
-    <h5><i class="bi bi-plus-circle-fill"></i><span id="newModalTitle">Create new</span></h5>
-
-    <!-- Type toggle -->
-    <div class="modal-type-row">
-      <button class="modal-type-btn active" id="typeFileBtn" onclick="setNewType('file')">
-        <i class="bi bi-file-earmark-text"></i> File
-      </button>
-      <button class="modal-type-btn" id="typeFolderBtn" onclick="setNewType('folder')">
-        <i class="bi bi-folder-plus"></i> Folder
-      </button>
-    </div>
-
-    <!-- Context hint -->
-    <div class="modal-ctx" id="newCtxRow">
-      <i class="bi bi-folder2-open"></i>
-      <span id="newCtxLabel">Creating in root</span>
-    </div>
-
-    <input class="modal-input" id="newFilename" placeholder="name"
-      oninput="updateNewHint()"
+    <h5><i class="bi bi-file-earmark-plus me-2"></i>New file</h5>
+    <input class="modal-input" id="newFilename" placeholder="e.g. notes/my-paper.md"
       onkeydown="if(event.key==='Enter')confirmNew(); if(event.key==='Escape')closeNewModal()">
-    <div class="modal-hint" id="newHint">Enter a name for the new file. <code>.md</code> added automatically.</div>
+    <div class="modal-hint">Relative path from library root. <code>.md</code> added automatically.</div>
     <div class="modal-error" id="newError"></div>
     <div class="modal-footer">
       <button class="btn-modal" onclick="closeNewModal()">Cancel</button>
-      <button class="btn-modal primary" id="newConfirmBtn" onclick="confirmNew()">Create</button>
+      <button class="btn-modal primary" onclick="confirmNew()">Create</button>
     </div>
   </div>
 </div>
 
-<!-- ── Upload .md Modal ── -->
-<div class="modal-bg" id="uploadMdModal" onclick="if(event.target===this)closeUploadMdModal()">
-  <div class="modal-box">
-    <h5><i class="bi bi-upload"></i> Upload Markdown file</h5>
-    <div class="modal-ctx" id="uploadCtxRow">
-      <i class="bi bi-folder2-open"></i>
-      <span id="uploadCtxLabel">Uploading to root</span>
-    </div>
-    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('mdUploadInput').click()"
-      ondragover="uploadZoneDrag(event,true)" ondragleave="uploadZoneDrag(event,false)" ondrop="uploadZoneDrop(event)">
-      <i class="bi bi-file-earmark-arrow-up"></i>
-      <span id="uploadZoneLabel">Click to choose or drag a <strong>.md</strong> file</span>
-    </div>
-    <input type="file" id="mdUploadInput" accept=".md" onchange="uploadMdSelected(event)">
-    <div class="modal-error" id="uploadMdError"></div>
-    <div class="modal-footer">
-      <button class="btn-modal" onclick="closeUploadMdModal()">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Rename Modal ── -->
-<div class="modal-bg" id="renameModal" onclick="if(event.target===this)closeRenameModal()">
-  <div class="modal-box">
-    <h5><i class="bi bi-pencil-square"></i> Rename</h5>
-    <div class="modal-ctx" id="renameCtxRow">
-      <i class="bi bi-file-earmark-text"></i>
-      <span id="renameCtxLabel"></span>
-    </div>
-    <input class="modal-input" id="renameInput" placeholder="New name"
-      onkeydown="if(event.key==='Enter')confirmRename(); if(event.key==='Escape')closeRenameModal()">
-    <div class="modal-hint" id="renameHint"></div>
-    <div class="modal-error" id="renameError"></div>
-    <div class="modal-footer">
-      <button class="btn-modal" onclick="closeRenameModal()">Cancel</button>
-      <button class="btn-modal primary" onclick="confirmRename()">Rename</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── Export warn Modal ── -->
+<!-- Media warning modal (for export) -->
 <div class="modal-bg" id="exportWarnModal" onclick="if(event.target===this)closeExportWarnModal()">
   <div class="modal-box">
-    <h5><i class="bi bi-exclamation-triangle" style="color:var(--warn)"></i>Media in this document</h5>
+    <h5><i class="bi bi-exclamation-triangle me-2"></i>Media in this document</h5>
     <div class="modal-warn">
       <i class="bi bi-info-circle-fill"></i>
       <span id="exportWarnText"></span>
@@ -1050,16 +829,14 @@ window.mermaidReady = true;
 
 <script>
 // ── State ──────────────────────────────────────────────────
-let treeData    = { root_files: [], folders: [] };
-let openFolders = new Set();
-let current     = null;
-let selectedFolder = null;
-let mode        = 'preview';
-let isDirty     = false;
+let treeData   = { root_files: [], folders: [] };
+let openFolders= new Set();
+let current    = null;
+let mode       = 'preview';
+let isDirty    = false;
 let previewDebounce = null;
-let theme       = 'dark';
-let syncLock    = false;
-let sidebarCollapsed = false;
+let theme      = 'dark';
+let syncLock   = false;
 
 // ── Theme ──────────────────────────────────────────────────
 function mermaidTheme(t) { return t === 'dark' ? 'dark' : 'default'; }
@@ -1091,7 +868,7 @@ function toggleTheme() {
   document.getElementById('themeColorMeta').content = next === 'light' ? '#f0f4f8' : '#0c1220';
 }
 
-// ── Sidebar ────────────────────────────────────────────────
+// ── Sidebar (mobile) ──────────────────────────────────────
 function openSidebar()  {
   document.getElementById('sidebar').classList.add('show');
   document.getElementById('backdrop').classList.add('show');
@@ -1099,78 +876,6 @@ function openSidebar()  {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('show');
   document.getElementById('backdrop').classList.remove('show');
-}
-function toggleSidebarDesktop() {
-  sidebarCollapsed = !sidebarCollapsed;
-  const sb  = document.getElementById('sidebar');
-  const btn = document.getElementById('sidebarToggle');
-  sb.classList.toggle('collapsed', sidebarCollapsed);
-  btn.classList.toggle('rotated', sidebarCollapsed);
-  localStorage.setItem('sb-collapsed', sidebarCollapsed ? '1' : '0');
-}
-
-// ── Context helpers ────────────────────────────────────────
-function getContextFolder() {
-  if (selectedFolder) return selectedFolder;
-  if (current && current.includes('/')) {
-    return current.split('/').slice(0, -1).join('/');
-  }
-  return null;
-}
-
-function updateCtxHint() {
-  const folder = getContextFolder();
-  const hint = document.getElementById('ctxHint');
-  const text = document.getElementById('ctxHintText');
-  if (folder) {
-    text.textContent = `In: ${folder}`;
-    hint.classList.add('show');
-  } else {
-    hint.classList.remove('show');
-  }
-}
-
-// ── Folder animation ───────────────────────────────────────
-// Animates a folder-children element open or closed by measuring
-// its actual scrollHeight — no max-height guessing needed.
-function animateFolderChildren(el, open) {
-  // Cancel any in-progress transition cleanly
-  el.style.transition = 'none';
-  if (open) {
-    el.style.display = 'block';
-    el.style.overflow = 'hidden';
-    const fullH = el.scrollHeight;
-    el.style.height = '0px';
-    // Double rAF ensures the browser has committed height=0 before we animate
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.style.transition = 'height .22s cubic-bezier(.4,0,.2,1)';
-        el.style.height = fullH + 'px';
-      });
-    });
-    el.addEventListener('transitionend', function done() {
-      el.style.height = '';
-      el.style.overflow = '';
-      el.style.transition = '';
-      el.removeEventListener('transitionend', done);
-    }, { once: true });
-  } else {
-    el.style.height = el.scrollHeight + 'px';
-    el.style.overflow = 'hidden';
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.style.transition = 'height .18s cubic-bezier(.4,0,.2,1)';
-        el.style.height = '0px';
-      });
-    });
-    el.addEventListener('transitionend', function done() {
-      el.style.display = 'none';
-      el.style.height = '';
-      el.style.overflow = '';
-      el.style.transition = '';
-      el.removeEventListener('transitionend', done);
-    }, { once: true });
-  }
 }
 
 // ── File list ─────────────────────────────────────────────
@@ -1180,42 +885,18 @@ async function loadFiles() {
   renderTree();
 }
 
-function makeRenameBtn(path, isFolder) {
-  const btn = document.createElement('button');
-  btn.className = 'row-btn';
-  btn.title = 'Rename';
-  btn.innerHTML = '<i class="bi bi-pencil"></i>';
-  btn.onclick = e => { e.stopPropagation(); openRenameModal(path, isFolder); };
-  return btn;
-}
-
 function makeFileItem(file, isRoot) {
   const div = document.createElement('div');
   const isReadme = file.toLowerCase() === 'readme.md';
   const name = file.split('/').pop().replace(/\.md$/i, '');
   div.className = 'file-item' + (isRoot ? ' root' : '') + (file === current ? ' active' : '') + (isReadme ? ' readme' : '');
   div.title = file;
-
-  const nameSpan = document.createElement('span');
-  nameSpan.className = 'fi-name';
   if (isReadme) {
-    nameSpan.innerHTML = `<i class="bi bi-bookmark-star-fill" style="font-size:10px;margin-right:4px"></i>${name}`;
+    div.innerHTML = `<i class="bi bi-bookmark-star-fill" style="font-size:10px;margin-right:4px"></i>${name}`;
   } else {
-    nameSpan.textContent = name;
+    div.textContent = name;
   }
-  div.appendChild(nameSpan);
-
-  const actions = document.createElement('span');
-  actions.className = 'row-actions';
-  actions.appendChild(makeRenameBtn(file, false));
-  div.appendChild(actions);
-
-  div.onclick = () => {
-    selectedFolder = null;
-    updateCtxHint();
-    openFile(file, true);
-    closeSidebar();
-  };
+  div.onclick = () => { openFile(file, true); closeSidebar(); };
   return div;
 }
 
@@ -1231,79 +912,24 @@ function renderTree() {
 
   treeData.folders.forEach(folder => {
     const isOpen = openFolders.has(folder.name);
-    const isSelected = selectedFolder === folder.name;
-
     const row = document.createElement('div');
-    row.className = 'folder-row' + (isOpen ? ' open' : '') + (isSelected ? ' selected' : '');
+    row.className = 'folder-row' + (isOpen ? ' open' : '');
+    row.innerHTML = `<i class="bi bi-chevron-right folder-chevron"></i>
+      <i class="bi bi-folder${isOpen ? '2-open' : ''}-fill" style="font-size:11px;opacity:.55"></i>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${folder.name}</span>
+      <span class="folder-count">${folder.files.length}</span>`;
+    row.onclick = () => toggleFolder(folder.name);
 
-    const chevron = document.createElement('i');
-    chevron.className = 'bi bi-chevron-right folder-chevron';
-    // Set initial rotation state via inline style to match isOpen
-    if (isOpen) chevron.style.transform = 'rotate(90deg)';
-
-    const icon = document.createElement('i');
-    icon.className = `bi bi-folder${isOpen ? '2-open' : ''}-fill`;
-    icon.style.cssText = 'font-size:11px;opacity:.55';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-    nameSpan.textContent = folder.name;
-
-    const count = document.createElement('span');
-    count.className = 'folder-count';
-    count.textContent = folder.files.length;
-
-    const actions = document.createElement('span');
-    actions.className = 'row-actions';
-    actions.appendChild(makeRenameBtn(folder.name, true));
-
-    row.appendChild(chevron);
-    row.appendChild(icon);
-    row.appendChild(nameSpan);
-    row.appendChild(count);
-    row.appendChild(actions);
-
-    // Build children container — hidden initially if folder is closed
     const children = document.createElement('div');
-    children.className = 'folder-children';
+    children.className = 'folder-children' + (isOpen ? ' open' : '');
     folder.files.forEach(f => children.appendChild(makeFileItem(f, false)));
-    if (!isOpen) children.style.display = 'none';
-
-    row.onclick = (e) => {
-      if (e.target.closest('.row-actions')) return;
-      const opening = !openFolders.has(folder.name);
-      if (opening) {
-        openFolders.add(folder.name);
-        selectedFolder = folder.name;
-      } else {
-        openFolders.delete(folder.name);
-        if (selectedFolder === folder.name) selectedFolder = null;
-      }
-
-      // Animate children in place — no full re-render needed
-      animateFolderChildren(children, opening);
-
-      // Update row classes and icon/chevron directly
-      row.classList.toggle('open', opening);
-      row.classList.toggle('selected', opening || selectedFolder === folder.name);
-      chevron.style.transform = opening ? 'rotate(90deg)' : '';
-      icon.className = `bi bi-folder${opening ? '2-open' : ''}-fill`;
-      icon.style.cssText = 'font-size:11px;opacity:.55';
-
-      updateCtxHint();
-    };
-
     list.appendChild(row);
     list.appendChild(children);
   });
 }
 
 function toggleFolder(name) {
-  if (openFolders.has(name)) {
-    openFolders.delete(name);
-  } else {
-    openFolders.add(name);
-  }
+  openFolders.has(name) ? openFolders.delete(name) : openFolders.add(name);
   renderTree();
 }
 
@@ -1322,16 +948,13 @@ function filterFiles() {
     const folder = parts.join('/');
     div.className = 'file-item root' + (file === current ? ' active' : '') + (isReadme ? ' readme' : '');
     div.title = file;
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'fi-name';
     if (folder) {
-      nameSpan.innerHTML = `<span class="folder-tag">${folder}/</span>${name}`;
+      div.innerHTML = `<span class="folder-tag">${folder}/</span>${name}`;
     } else if (isReadme) {
-      nameSpan.innerHTML = `<i class="bi bi-bookmark-star-fill" style="font-size:10px;margin-right:4px"></i>${name}`;
+      div.innerHTML = `<i class="bi bi-bookmark-star-fill" style="font-size:10px;margin-right:4px"></i>${name}`;
     } else {
-      nameSpan.textContent = name;
+      div.textContent = name;
     }
-    div.appendChild(nameSpan);
     div.onclick = () => { openFile(file, true); closeSidebar(); };
     list.appendChild(div);
   });
@@ -1474,214 +1097,6 @@ function setStatus(s) {
   el.textContent = s === 'saved' ? '✓ Saved' : s === 'unsaved' ? '● Unsaved' : s === 'error' ? '✕ Failed' : '';
 }
 
-// ── New file/folder Modal ─────────────────────────────────
-let newType = 'file';
-
-function setNewType(t) {
-  newType = t;
-  document.getElementById('typeFileBtn').classList.toggle('active', t === 'file');
-  document.getElementById('typeFolderBtn').classList.toggle('active', t === 'folder');
-  updateNewHint();
-  const input = document.getElementById('newFilename');
-  input.placeholder = t === 'file' ? 'filename' : 'folder-name';
-  input.focus();
-}
-
-function updateNewHint() {
-  const val = document.getElementById('newFilename').value.trim();
-  const hint = document.getElementById('newHint');
-  const ctx = getContextFolder();
-  if (newType === 'file') {
-    const full = ctx ? `${ctx}/${val || 'name'}.md` : `${val || 'name'}.md`;
-    hint.innerHTML = `Creates: <code>${full}</code>`;
-  } else {
-    const full = ctx ? `${ctx}/${val || 'name'}` : `${val || 'name'}`;
-    hint.innerHTML = `Creates folder: <code>${full}</code>`;
-  }
-}
-
-function openNewModal(type) {
-  newType = type || 'file';
-  document.getElementById('typeFileBtn').classList.toggle('active', newType === 'file');
-  document.getElementById('typeFolderBtn').classList.toggle('active', newType === 'folder');
-  document.getElementById('newFilename').value = '';
-  document.getElementById('newError').style.display = 'none';
-  const ctx = getContextFolder();
-  document.getElementById('newCtxLabel').textContent = ctx ? `Creating inside: ${ctx}` : 'Creating in root';
-  updateNewHint();
-  document.getElementById('newModal').classList.add('show');
-  setTimeout(() => document.getElementById('newFilename').focus(), 50);
-}
-
-function closeNewModal() { document.getElementById('newModal').classList.remove('show'); }
-
-async function confirmNew() {
-  const name = document.getElementById('newFilename').value.trim();
-  const err  = document.getElementById('newError');
-  err.style.display = 'none';
-  if (!name) { err.textContent = 'Enter a name.'; err.style.display = 'block'; return; }
-
-  const ctx = getContextFolder();
-
-  if (newType === 'folder') {
-    const folderPath = ctx ? `${ctx}/${name}` : name;
-    const res = await fetch('/api/mkdir', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder: folderPath }),
-    });
-    const data = await res.json();
-    if (!data.ok) { err.textContent = data.error; err.style.display = 'block'; return; }
-    closeNewModal();
-    selectedFolder = folderPath.split('/')[0];
-    openFolders.add(selectedFolder);
-    await loadFiles();
-    updateCtxHint();
-  } else {
-    let filePath = name.endsWith('.md') ? name : name + '.md';
-    if (ctx) filePath = `${ctx}/${filePath}`;
-    const res = await fetch('/api/new', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: filePath }),
-    });
-    const data = await res.json();
-    if (!data.ok) { err.textContent = data.error; err.style.display = 'block'; return; }
-    closeNewModal();
-    await loadFiles();
-    setMode('editor');
-    await openFile(data.file, true);
-  }
-}
-
-// ── Upload .md Modal ──────────────────────────────────────
-function openUploadMdModal() {
-  document.getElementById('uploadMdError').style.display = 'none';
-  document.getElementById('uploadZoneLabel').innerHTML = 'Click to choose or drag a <strong>.md</strong> file';
-  document.getElementById('mdUploadInput').value = '';
-  const ctx = getContextFolder();
-  document.getElementById('uploadCtxLabel').textContent = ctx ? `Uploading to: ${ctx}` : 'Uploading to root';
-  document.getElementById('uploadMdModal').classList.add('show');
-}
-function closeUploadMdModal() { document.getElementById('uploadMdModal').classList.remove('show'); }
-
-function uploadZoneDrag(e, enter) {
-  e.preventDefault();
-  document.getElementById('uploadZone').classList.toggle('drag', enter);
-}
-
-function uploadZoneDrop(e) {
-  e.preventDefault();
-  document.getElementById('uploadZone').classList.remove('drag');
-  const file = e.dataTransfer.files[0];
-  if (file) doUploadMd(file);
-}
-
-function uploadMdSelected(e) {
-  const file = e.target.files[0];
-  if (file) doUploadMd(file);
-}
-
-async function doUploadMd(file) {
-  const err = document.getElementById('uploadMdError');
-  err.style.display = 'none';
-  if (!file.name.toLowerCase().endsWith('.md')) {
-    err.textContent = 'Only .md files are allowed.';
-    err.style.display = 'block';
-    return;
-  }
-  document.getElementById('uploadZoneLabel').innerHTML = `<span class="spinner"></span> Uploading ${file.name}…`;
-  const ctx = getContextFolder();
-  const fd = new FormData();
-  fd.append('file', file);
-  if (ctx) fd.append('folder', ctx);
-  const res = await fetch('/api/upload-md', { method: 'POST', body: fd });
-  const data = await res.json();
-  if (!data.ok) {
-    err.textContent = data.error;
-    err.style.display = 'block';
-    document.getElementById('uploadZoneLabel').innerHTML = 'Click to choose or drag a <strong>.md</strong> file';
-    return;
-  }
-  closeUploadMdModal();
-  if (ctx) openFolders.add(ctx.split('/')[0]);
-  await loadFiles();
-  await openFile(data.file, true);
-}
-
-// ── Rename Modal ──────────────────────────────────────────
-let renameTarget = null;
-
-function openRenameModal(path, isFolder) {
-  renameTarget = { path, isFolder };
-  document.getElementById('renameError').style.display = 'none';
-  const parts = path.split('/');
-  const name = parts[parts.length - 1];
-  const ctx = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
-  const ctxRow = document.getElementById('renameCtxRow');
-  ctxRow.querySelector('i').className = isFolder ? 'bi bi-folder2-open' : 'bi bi-file-earmark-text';
-  document.getElementById('renameCtxLabel').textContent = isFolder
-    ? `Folder: ${path}`
-    : `File: ${path}`;
-
-  const input = document.getElementById('renameInput');
-  input.value = isFolder ? name : name.replace(/\.md$/i, '');
-  document.getElementById('renameHint').innerHTML = isFolder
-    ? (ctx ? `Inside: <code>${ctx}</code>` : 'In root')
-    : (ctx ? `Inside: <code>${ctx}</code> · <code>.md</code> added automatically` : 'In root · <code>.md</code> added automatically');
-
-  document.getElementById('renameModal').classList.add('show');
-  setTimeout(() => { input.select(); input.focus(); }, 50);
-}
-function closeRenameModal() { document.getElementById('renameModal').classList.remove('show'); }
-
-async function confirmRename() {
-  const err = document.getElementById('renameError');
-  err.style.display = 'none';
-  if (!renameTarget) return;
-  const newName = document.getElementById('renameInput').value.trim();
-  if (!newName) { err.textContent = 'Enter a name.'; err.style.display = 'block'; return; }
-
-  const { path, isFolder } = renameTarget;
-  const parts = path.split('/');
-  const parent = parts.length > 1 ? parts.slice(0, -1).join('/') : null;
-
-  let newPath;
-  if (isFolder) {
-    newPath = parent ? `${parent}/${newName}` : newName;
-  } else {
-    const newFile = newName.endsWith('.md') ? newName : newName + '.md';
-    newPath = parent ? `${parent}/${newFile}` : newFile;
-  }
-
-  const res = await fetch('/api/rename', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ old: path, new: newPath }),
-  });
-  const data = await res.json();
-  if (!data.ok) { err.textContent = data.error; err.style.display = 'block'; return; }
-
-  closeRenameModal();
-  if (isFolder) {
-    if (selectedFolder === path) selectedFolder = newPath.split('/')[0];
-    if (openFolders.has(path)) { openFolders.delete(path); openFolders.add(newPath); }
-    if (current && current.startsWith(path + '/')) {
-      current = newPath + current.slice(path.length);
-    }
-  } else {
-    if (current === path) {
-      current = newPath;
-      setUrlFile(newPath);
-    }
-  }
-  await loadFiles();
-  if (current) {
-    const pretty = slugTitle(current);
-    document.getElementById('title').innerHTML =
-      `<span class="name">${pretty}</span>
-       <span style="color:var(--muted);font-size:11px;margin-left:6px">${current}</span>`;
-    document.title = `${pretty} — Markdown Library`;
-  }
-}
-
 // ── Download / Export ─────────────────────────────────────
 function toggleDdMenu(e) {
   e.stopPropagation();
@@ -1729,6 +1144,7 @@ async function downloadAs(fmt) {
   document.getElementById('ddMenu').classList.remove('show');
   if (!current) { alert('Open a file first.'); return; }
   const name = baseName();
+
   if (fmt === 'md') {
     triggerDownload(new Blob([document.getElementById('editor').value], { type: 'text/markdown' }), `${name}.md`);
     return;
@@ -1886,7 +1302,7 @@ function blobToDataUrl(blob) {
   });
 }
 
-// ── Media upload (editor drop) ────────────────────────────
+// ── Media upload ──────────────────────────────────────────
 function buildMediaMarkdown(url, name, type) {
   const ext = name.split('.').pop().toLowerCase();
   if (['jpg','jpeg','png','gif','webp','svg','bmp','avif'].includes(ext)) return `![${name}](${url})`;
@@ -1962,6 +1378,30 @@ document.getElementById('editor').addEventListener('paste', async e => {
   } catch(_) {}
 });
 
+// ── New file modal ─────────────────────────────────────────
+function openNewModal() {
+  document.getElementById('newFilename').value = '';
+  document.getElementById('newError').style.display = 'none';
+  document.getElementById('newModal').classList.add('show');
+  setTimeout(() => document.getElementById('newFilename').focus(), 50);
+}
+function closeNewModal() { document.getElementById('newModal').classList.remove('show'); }
+async function confirmNew() {
+  const name = document.getElementById('newFilename').value.trim();
+  const err  = document.getElementById('newError');
+  if (!name) { err.textContent = 'Enter a filename.'; err.style.display = 'block'; return; }
+  const res  = await fetch('/api/new', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: name }),
+  });
+  const data = await res.json();
+  if (!data.ok) { err.textContent = data.error; err.style.display = 'block'; return; }
+  closeNewModal();
+  await loadFiles();
+  setMode('editor');
+  await openFile(data.file, true);
+}
+
 // ── URL helpers ───────────────────────────────────────────
 function getUrlFile() { return new URLSearchParams(location.search).get('file') || ''; }
 function setUrlFile(f) {
@@ -2004,11 +1444,6 @@ if ('serviceWorker' in navigator) {
 // ── Init ──────────────────────────────────────────────────
 (async () => {
   applyTheme(localStorage.getItem('md-theme') || 'dark');
-  if (localStorage.getItem('sb-collapsed') === '1') {
-    sidebarCollapsed = true;
-    document.getElementById('sidebar').classList.add('collapsed');
-    document.getElementById('sidebarToggle').classList.add('rotated');
-  }
   await loadFiles();
   const f = getUrlFile() || __INITIAL_FILE__;
   if (f) await openFile(f, !getUrlFile());
