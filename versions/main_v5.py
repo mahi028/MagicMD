@@ -50,37 +50,14 @@ except ImportError:
 # HELPERS
 # ============================================================
 
-def build_tree(dir_path, prefix=""):
-    """Recursively walk dir_path and return (files, folders) where files is
-    a flat list of relative .md paths directly inside dir_path, and folders
-    is a list of {name, path, files, folders} dicts for every subdirectory
-    (nested arbitrarily deep), including folders that contain no markdown
-    files at all."""
+def get_markdown_files():
     files = []
-    folders = []
-    try:
-        entries = sorted(dir_path.iterdir(), key=lambda e: e.name.lower())
-    except FileNotFoundError:
-        return files, folders
-
-    for entry in entries:
-        if entry.name.startswith("."):
+    for path in base_path.rglob("*.md"):
+        if ".ipynb_checkpoints" in path.parts:
             continue
-        if entry.name == "__pycache__":
-            continue
-        rel = f"{prefix}/{entry.name}" if prefix else entry.name
-        if entry.is_dir():
-            sub_files, sub_folders = build_tree(entry, rel)
-            folders.append({
-                "name": entry.name,
-                "path": rel,
-                "files": sub_files,
-                "folders": sub_folders,
-            })
-        elif entry.is_file() and entry.suffix.lower() == ".md":
-            files.append(rel)
-
-    return files, folders
+        rel = path.relative_to(base_path)
+        files.append(str(rel).replace("\\", "/"))
+    return sorted(files)
 
 
 def resolve_safe_path(relative_path):
@@ -264,8 +241,16 @@ def favicon():
 
 @app.route("/api/files")
 def api_files():
-    root_files, folders = build_tree(base_path)
-    return jsonify({"root_files": sorted(root_files), "folders": folders})
+    flat = get_markdown_files()
+    root_files, folder_map = [], {}
+    for f in flat:
+        parts = f.split("/")
+        if len(parts) == 1:
+            root_files.append(f)
+        else:
+            folder_map.setdefault(parts[0], []).append(f)
+    folders = [{"name": n, "files": fs} for n, fs in sorted(folder_map.items())]
+    return jsonify({"root_files": root_files, "folders": folders})
 
 
 @app.route("/api/readme")
@@ -638,9 +623,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .file-item.readme { color: var(--accent); }
 .folder-tag { font-size: 10px; color: var(--muted); opacity: .6; margin-right: 3px; flex-shrink: 0; }
 
-.folder-empty-hint { padding: 5px 10px 8px 30px; font-size: 11px; color: var(--muted); opacity: .6;
-  font-style: italic; }
-
 /* ── Topbar ── */
 #topbar { height: var(--topbar-h); background: var(--panel); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 6px; padding: 0 10px; flex-shrink: 0; }
@@ -691,36 +673,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #previewWrap { flex: 1; display: flex; overflow: hidden; }
 #previewRendered { flex: 1; overflow-y: auto; padding: 20px; background: var(--bg); }
 #editorWrap { flex: 1; display: flex; overflow: hidden; }
-#editorPane { flex: 0 0 50%; display: flex; flex-direction: column; overflow: hidden; position: relative;
-  min-width: 0; }
-#editorRenderedPane { flex: 1 1 auto; overflow-y: auto; padding: 20px; background: var(--bg); min-width: 0; }
-
-/* ── Draggable split resizer ── */
-.split-resizer {
-  flex: 0 0 6px;
-  width: 6px;
-  cursor: col-resize;
-  background: var(--border);
-  position: relative;
-  z-index: 5;
-  transition: background .12s;
-}
-.split-resizer::after {
-  content: '';
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  width: 2px; height: 28px; border-radius: 2px;
-  background: var(--muted); opacity: .5;
-}
-.split-resizer:hover, .split-resizer.dragging { background: var(--accent); }
-.split-resizer:hover::after, .split-resizer.dragging::after { opacity: 0; }
+#editorPane { flex: 1; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); overflow: hidden; position: relative; }
+#editorRenderedPane { flex: 1; overflow-y: auto; padding: 20px; background: var(--bg); }
 
 @media (max-width: 767px) {
   #editorWrap { flex-direction: column; }
-  #editorPane { flex: 0 0 50%; border-right: none; }
-  #editorRenderedPane { flex: 1 1 auto; }
-  .split-resizer { flex: 0 0 6px; width: 100%; height: 6px; cursor: row-resize; }
-  .split-resizer::after { width: 28px; height: 2px; }
+  #editorPane { flex: 1; border-right: none; border-bottom: 1px solid var(--border); }
+  #editorRenderedPane { flex: 1; }
 }
 
 /* ── Article prose ── */
@@ -884,8 +844,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
         <button class="btn-sb" onclick="loadFiles()" title="Refresh">
           <i class="bi bi-arrow-clockwise"></i>
         </button>
-        <button class="btn-sb primary" id="topNewBtn" onclick="openNewFolderModalRoot()" title="New folder in root">
-          <i class="bi bi-folder-plus"></i> New Folder
+        <button class="btn-sb primary" onclick="openNewModal('file')" title="New file or folder">
+          <i class="bi bi-plus-lg"></i> New
         </button>
         <button class="btn-sb icon-only" onclick="openUploadMdModal()" title="Upload .md file">
           <i class="bi bi-upload"></i>
@@ -990,7 +950,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
             <span>Drop media here · max 1 GB</span>
           </div>
         </div>
-        <div class="split-resizer" id="splitResizer" title="Drag to resize"></div>
         <div id="editorRenderedPane">
           <div class="pane-label">Preview</div>
           <article id="editorPreview" class="article"></article>
@@ -1112,33 +1071,6 @@ let previewDebounce = null;
 let theme       = 'dark';
 let syncLock    = false;
 let sidebarCollapsed = false;
-// When set, this overrides the normal "context folder" resolution logic —
-// used when the New modal is opened from a specific folder's own '+' button.
-let modalContextOverride = null;
-// When true, forces the New modal into the root context no matter what is
-// currently selected/open — used by the top "New Folder" button.
-let modalForceRoot = false;
-
-// Given a folder path like "a/b/c", returns ["a", "a/b", "a/b/c"] so every
-// ancestor (and the folder itself) can be added to the open-folders set.
-function pathAndAncestors(path) {
-  const parts = path.split('/').filter(Boolean);
-  const out = [];
-  let cur = '';
-  for (const p of parts) {
-    cur = cur ? `${cur}/${p}` : p;
-    out.push(cur);
-  }
-  return out;
-}
-
-// Given a *file* path like "a/b/c.md", returns the ancestor folder paths
-// only (not including the file itself): ["a", "a/b"].
-function fileAncestorFolders(filePath) {
-  const parts = filePath.split('/');
-  parts.pop();
-  return parts.length ? pathAndAncestors(parts.join('/')) : [];
-}
 
 // ── Theme ──────────────────────────────────────────────────
 function mermaidTheme(t) { return t === 'dark' ? 'dark' : 'default'; }
@@ -1190,8 +1122,6 @@ function toggleSidebarDesktop() {
 
 // ── Context helpers ────────────────────────────────────────
 function getContextFolder() {
-  if (modalForceRoot) return null;
-  if (modalContextOverride !== null) return modalContextOverride;
   if (selectedFolder) return selectedFolder;
   if (current && current.includes('/')) {
     return current.split('/').slice(0, -1).join('/');
@@ -1270,23 +1200,12 @@ function makeRenameBtn(path, isFolder) {
   return btn;
 }
 
-function makeFolderAddBtn(path) {
-  const btn = document.createElement('button');
-  btn.className = 'row-btn';
-  btn.title = 'New file or folder here';
-  btn.innerHTML = '<i class="bi bi-plus-lg"></i>';
-  btn.onclick = e => { e.stopPropagation(); openNewModalForFolder(path); };
-  return btn;
-}
-
-function makeFileItem(file, isRoot, depth) {
-  depth = depth || 0;
+function makeFileItem(file, isRoot) {
   const div = document.createElement('div');
   const isReadme = file.toLowerCase() === 'readme.md';
   const name = file.split('/').pop().replace(/\.md$/i, '');
   div.className = 'file-item' + (isRoot ? ' root' : '') + (file === current ? ' active' : '') + (isReadme ? ' readme' : '');
   div.title = file;
-  if (!isRoot) div.style.paddingLeft = (26 + depth * 14) + 'px';
 
   const nameSpan = document.createElement('span');
   nameSpan.className = 'fi-name';
@@ -1311,101 +1230,6 @@ function makeFileItem(file, isRoot, depth) {
   return div;
 }
 
-// Recursively counts every markdown file inside a folder, including ones
-// nested inside subfolders — used for the little count badge on each row.
-function countFilesRecursive(folder) {
-  let n = folder.files.length;
-  for (const sub of folder.folders) n += countFilesRecursive(sub);
-  return n;
-}
-
-// Builds a folder row plus its (possibly nested) children container.
-// Returns { row, children } so the caller can append both to the DOM.
-function buildFolderNode(folder, depth) {
-  const isOpen = openFolders.has(folder.path);
-  const isSelected = selectedFolder === folder.path;
-
-  const row = document.createElement('div');
-  row.className = 'folder-row' + (isOpen ? ' open' : '') + (isSelected ? ' selected' : '');
-  row.style.paddingLeft = (10 + depth * 14) + 'px';
-
-  const chevron = document.createElement('i');
-  chevron.className = 'bi bi-chevron-right folder-chevron';
-  // Set initial rotation state via inline style to match isOpen
-  if (isOpen) chevron.style.transform = 'rotate(90deg)';
-
-  const icon = document.createElement('i');
-  icon.className = `bi bi-folder${isOpen ? '2-open' : ''}-fill`;
-  icon.style.cssText = 'font-size:11px;opacity:.55';
-
-  const nameSpan = document.createElement('span');
-  nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-  nameSpan.textContent = folder.name;
-
-  const count = document.createElement('span');
-  count.className = 'folder-count';
-  count.textContent = countFilesRecursive(folder);
-
-  const actions = document.createElement('span');
-  actions.className = 'row-actions';
-  actions.appendChild(makeFolderAddBtn(folder.path));
-  actions.appendChild(makeRenameBtn(folder.path, true));
-
-  row.appendChild(chevron);
-  row.appendChild(icon);
-  row.appendChild(nameSpan);
-  row.appendChild(count);
-  row.appendChild(actions);
-
-  // Build children container — hidden initially if folder is closed
-  const children = document.createElement('div');
-  children.className = 'folder-children';
-
-  const hasContent = folder.files.length > 0 || folder.folders.length > 0;
-  if (hasContent) {
-    [...folder.files].sort((a, b) => a.localeCompare(b))
-      .forEach(f => children.appendChild(makeFileItem(f, false, depth)));
-    folder.folders.forEach(sub => {
-      const node = buildFolderNode(sub, depth + 1);
-      children.appendChild(node.row);
-      children.appendChild(node.children);
-    });
-  } else {
-    const emptyHint = document.createElement('div');
-    emptyHint.className = 'folder-empty-hint';
-    emptyHint.style.paddingLeft = (30 + depth * 14) + 'px';
-    emptyHint.textContent = 'Empty folder';
-    children.appendChild(emptyHint);
-  }
-  if (!isOpen) children.style.display = 'none';
-
-  row.onclick = (e) => {
-    if (e.target.closest('.row-actions')) return;
-    const opening = !openFolders.has(folder.path);
-    if (opening) {
-      openFolders.add(folder.path);
-      selectedFolder = folder.path;
-    } else {
-      openFolders.delete(folder.path);
-      if (selectedFolder === folder.path) selectedFolder = null;
-    }
-
-    // Animate children in place — no full re-render needed
-    animateFolderChildren(children, opening);
-
-    // Update row classes and icon/chevron directly
-    row.classList.toggle('open', opening);
-    row.classList.toggle('selected', opening || selectedFolder === folder.path);
-    chevron.style.transform = opening ? 'rotate(90deg)' : '';
-    icon.className = `bi bi-folder${opening ? '2-open' : ''}-fill`;
-    icon.style.cssText = 'font-size:11px;opacity:.55';
-
-    updateCtxHint();
-  };
-
-  return { row, children };
-}
-
 function renderTree() {
   const list = document.getElementById('fileList');
   list.innerHTML = '';
@@ -1417,9 +1241,71 @@ function renderTree() {
   rootSorted.forEach(f => list.appendChild(makeFileItem(f, true)));
 
   treeData.folders.forEach(folder => {
-    const node = buildFolderNode(folder, 0);
-    list.appendChild(node.row);
-    list.appendChild(node.children);
+    const isOpen = openFolders.has(folder.name);
+    const isSelected = selectedFolder === folder.name;
+
+    const row = document.createElement('div');
+    row.className = 'folder-row' + (isOpen ? ' open' : '') + (isSelected ? ' selected' : '');
+
+    const chevron = document.createElement('i');
+    chevron.className = 'bi bi-chevron-right folder-chevron';
+    // Set initial rotation state via inline style to match isOpen
+    if (isOpen) chevron.style.transform = 'rotate(90deg)';
+
+    const icon = document.createElement('i');
+    icon.className = `bi bi-folder${isOpen ? '2-open' : ''}-fill`;
+    icon.style.cssText = 'font-size:11px;opacity:.55';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    nameSpan.textContent = folder.name;
+
+    const count = document.createElement('span');
+    count.className = 'folder-count';
+    count.textContent = folder.files.length;
+
+    const actions = document.createElement('span');
+    actions.className = 'row-actions';
+    actions.appendChild(makeRenameBtn(folder.name, true));
+
+    row.appendChild(chevron);
+    row.appendChild(icon);
+    row.appendChild(nameSpan);
+    row.appendChild(count);
+    row.appendChild(actions);
+
+    // Build children container — hidden initially if folder is closed
+    const children = document.createElement('div');
+    children.className = 'folder-children';
+    folder.files.forEach(f => children.appendChild(makeFileItem(f, false)));
+    if (!isOpen) children.style.display = 'none';
+
+    row.onclick = (e) => {
+      if (e.target.closest('.row-actions')) return;
+      const opening = !openFolders.has(folder.name);
+      if (opening) {
+        openFolders.add(folder.name);
+        selectedFolder = folder.name;
+      } else {
+        openFolders.delete(folder.name);
+        if (selectedFolder === folder.name) selectedFolder = null;
+      }
+
+      // Animate children in place — no full re-render needed
+      animateFolderChildren(children, opening);
+
+      // Update row classes and icon/chevron directly
+      row.classList.toggle('open', opening);
+      row.classList.toggle('selected', opening || selectedFolder === folder.name);
+      chevron.style.transform = opening ? 'rotate(90deg)' : '';
+      icon.className = `bi bi-folder${opening ? '2-open' : ''}-fill`;
+      icon.style.cssText = 'font-size:11px;opacity:.55';
+
+      updateCtxHint();
+    };
+
+    list.appendChild(row);
+    list.appendChild(children);
   });
 }
 
@@ -1432,16 +1318,10 @@ function toggleFolder(name) {
   renderTree();
 }
 
-function flattenFiles(folder) {
-  let out = [...folder.files];
-  for (const sub of folder.folders) out = out.concat(flattenFiles(sub));
-  return out;
-}
-
 function filterFiles() {
   const q = document.getElementById('search').value.toLowerCase().trim();
   if (!q) { renderTree(); return; }
-  const all = [...treeData.root_files, ...treeData.folders.flatMap(f => flattenFiles(f))];
+  const all = [...treeData.root_files, ...treeData.folders.flatMap(f => f.files)];
   const matched = all.filter(f => f.toLowerCase().includes(q));
   const list = document.getElementById('fileList');
   list.innerHTML = '';
@@ -1479,7 +1359,8 @@ async function openFile(file, updateUrl) {
   isDirty = false;
   setStatus('');
   if (updateUrl) setUrlFile(file);
-  fileAncestorFolders(file).forEach(p => openFolders.add(p));
+  const parts = file.split('/');
+  if (parts.length > 1) openFolders.add(parts[0]);
   renderTree();
 
   const pretty = slugTitle(file);
@@ -1630,16 +1511,10 @@ function updateNewHint() {
   }
 }
 
-function openNewModal(type, opts) {
-  opts = opts || {};
+function openNewModal(type) {
   newType = type || 'file';
-  const locked = !!opts.lockType;
-
-  document.getElementById('typeFileBtn').style.display = locked ? 'none' : 'flex';
-  document.getElementById('typeFolderBtn').style.display = locked ? 'none' : 'flex';
   document.getElementById('typeFileBtn').classList.toggle('active', newType === 'file');
   document.getElementById('typeFolderBtn').classList.toggle('active', newType === 'folder');
-  document.getElementById('newModalTitle').textContent = locked ? 'New folder' : 'Create new';
   document.getElementById('newFilename').value = '';
   document.getElementById('newError').style.display = 'none';
   const ctx = getContextFolder();
@@ -1649,27 +1524,7 @@ function openNewModal(type, opts) {
   setTimeout(() => document.getElementById('newFilename').focus(), 50);
 }
 
-// Opens the New modal locked to a specific folder's context, regardless
-// of the currently selected folder or open file — used by each folder
-// row's own '+' button. Allows creating either a file or a folder inside
-// that folder.
-function openNewModalForFolder(folderName) {
-  modalContextOverride = folderName;
-  openNewModal('file');
-}
-
-// Opens the New modal forced to the root, only allowing folder creation —
-// used by the sidebar's top "New Folder" button.
-function openNewFolderModalRoot() {
-  modalForceRoot = true;
-  openNewModal('folder', { lockType: true });
-}
-
-function closeNewModal() {
-  document.getElementById('newModal').classList.remove('show');
-  modalContextOverride = null;
-  modalForceRoot = false;
-}
+function closeNewModal() { document.getElementById('newModal').classList.remove('show'); }
 
 async function confirmNew() {
   const name = document.getElementById('newFilename').value.trim();
@@ -1688,8 +1543,8 @@ async function confirmNew() {
     const data = await res.json();
     if (!data.ok) { err.textContent = data.error; err.style.display = 'block'; return; }
     closeNewModal();
-    selectedFolder = folderPath;
-    pathAndAncestors(folderPath).forEach(p => openFolders.add(p));
+    selectedFolder = folderPath.split('/')[0];
+    openFolders.add(selectedFolder);
     await loadFiles();
     updateCtxHint();
   } else {
@@ -2117,66 +1972,6 @@ document.getElementById('editor').addEventListener('paste', async e => {
     if (snippet) { e.preventDefault(); insertAtCursor(snippet); }
   } catch(_) {}
 });
-
-// ── Draggable split resizer (editor <-> preview) ──────────
-(function setupSplitResizer() {
-  const resizer = document.getElementById('splitResizer');
-  const wrap    = document.getElementById('editorWrap');
-  const pane    = document.getElementById('editorPane');
-  let dragging  = false;
-
-  function isColumn() { return window.matchMedia('(max-width: 767px)').matches; }
-
-  function setSplit(pct) {
-    pct = Math.min(80, Math.max(20, pct));
-    pane.style.flex = `0 0 ${pct}%`;
-    localStorage.setItem('split-pct', String(pct));
-  }
-
-  function clientCoords(e) {
-    if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-    return { x: e.clientX, y: e.clientY };
-  }
-
-  function onMove(e) {
-    if (!dragging) return;
-    const rect = wrap.getBoundingClientRect();
-    const { x, y } = clientCoords(e);
-    let pct;
-    if (isColumn()) {
-      pct = ((y - rect.top) / rect.height) * 100;
-    } else {
-      pct = ((x - rect.left) / rect.width) * 100;
-    }
-    setSplit(pct);
-  }
-
-  function startDrag(e) {
-    dragging = true;
-    resizer.classList.add('dragging');
-    document.body.style.cursor = isColumn() ? 'row-resize' : 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  }
-
-  function stopDrag() {
-    if (!dragging) return;
-    dragging = false;
-    resizer.classList.remove('dragging');
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-  }
-
-  resizer.addEventListener('mousedown', startDrag);
-  resizer.addEventListener('touchstart', startDrag, { passive: false });
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('touchmove', onMove, { passive: true });
-  window.addEventListener('mouseup', stopDrag);
-  window.addEventListener('touchend', stopDrag);
-
-  const saved = parseFloat(localStorage.getItem('split-pct'));
-  setSplit(!isNaN(saved) ? saved : 50);
-})();
 
 // ── URL helpers ───────────────────────────────────────────
 function getUrlFile() { return new URLSearchParams(location.search).get('file') || ''; }
